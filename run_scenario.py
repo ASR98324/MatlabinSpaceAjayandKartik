@@ -7,7 +7,8 @@ import argparse
 import os
 
 from habitat.config import Scenario
-from habitat.controllers import MPCController, NaiveController, RuleBasedController
+from habitat.controllers import NaiveController, RuleBasedController
+from habitat.mpc import MPCController
 from habitat.simulator import metrics, plot_run, simulate
 
 CONTROLLERS = {

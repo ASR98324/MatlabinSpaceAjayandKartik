@@ -40,30 +40,4 @@ class RuleBasedController:
                 "deferrable_on": soc > self.defer_soc}
 
 
-class MPCController:
-    """TODO: thermal-aware model predictive control (linear program).
-
-    Every step, over horizon H (e.g. 36 h):
-      forecast P_solar[0..H) with fourier_forecast (past data only)
-      decision vars per hour: heater_kw[h] in [0, max], defer[h] in [0, 1],
-                              ess[h] in [0, 1], batt energy E[h], cabin/wall temps x[h]
-      dynamics:   x[h+1] = Ad x[h] + Bq * (1000*heater[h] + gain_frac*1000*loads[h]) + Ba*T_amb[h]
-                  E[h+1] = E[h] + charge/discharge (split into + and - parts, LP-friendly)
-      constraints: critical load always served; T_min <= T_cabin[h] <= T_max;
-                   E[h] >= reserve; ess[h] = 1 unless forced
-      objective:  maximize deferrable work + w_ess*essential - w_slack*(temp/energy slack)
-    Solve with scipy.optimize.linprog (HiGHS); apply only hour 0 (receding horizon).
-    The pre-heat-then-coast behavior should emerge on its own from the thermal dynamics.
-
-    Until implemented, falls back to the rule-based controller so the pipeline runs.
-    """
-    name = "mpc"
-
-    def __init__(self, scen, thermal_model=None, horizon_h=36):
-        self.s = scen
-        self.thermal = thermal_model
-        self.H = horizon_h
-        self.fallback = RuleBasedController(scen)
-
-    def decide(self, obs):
-        return self.fallback.decide(obs)
+# MPC lives in habitat/mpc.py
