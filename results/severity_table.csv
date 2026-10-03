@@ -1,0 +1,4 @@
+storm,missions,naive_zero_outage,naive_worst_h,rule_based_zero_outage,rule_based_worst_h,mpc_zero_outage,mpc_worst_h
+mild (tau < 3),85,1.0,0.0,1.0,0.0,1.0,0.0
+moderate (3-3.75),63,0.238,110.0,0.698,33.0,0.794,8.0
+severe (> 3.75),52,0.0,179.0,0.019,136.0,0.038,18.0
