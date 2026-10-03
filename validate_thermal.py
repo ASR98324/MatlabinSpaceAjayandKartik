@@ -14,7 +14,7 @@ import numpy as np
 
 from habitat.config import Scenario
 from habitat.thermal import ThermalModel
-from heat1d import solve as cn_solve  # teammate's independent solver
+from heat_equation_1d import solve as cn_solve  # teammate's independent solver
 
 T_IN, T_OUT0, T_OUT1, HOURS = 21.0, -60.0, -95.0, 24
 
