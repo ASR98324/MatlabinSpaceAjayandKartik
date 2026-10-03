@@ -51,7 +51,7 @@ def simulate(scen: Scenario, make_controller):
         window = scen.loads.deferrable_hours[0] <= local < scen.loads.deferrable_hours[1]
 
         obs = dict(t_h=t[k], sol=sol, local_h=local, soc=batt.soc, E_kwh=batt.E,
-                   cap_kwh=batt.capacity_kwh, T_cabin=x[0], T_amb=T_amb[k],
+                   cap_kwh=batt.capacity_kwh, T_cabin=x[0], T_state=x.copy(), T_amb=T_amb[k],
                    gen_hist_t=t[:k], gen_hist_kw=gen[:k], storm_flag=storm_flag,
                    deferrable_window=window)
         a = ctrl.decide(obs)
