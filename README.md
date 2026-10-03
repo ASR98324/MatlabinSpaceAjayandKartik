@@ -67,7 +67,7 @@ The forecaster fits harmonics of the Mars-day period $P_\text{sol} = 24.66$ h to
 It never sees the true storm schedule. A storm detector compares each sol's actual energy $E$ to its forecast $\hat{E}$ and raises an alert when
 
 ```math
-r = \ln\frac{E}{\hat{E}} < \operatorname{median}(r_\text{past}) - \max\big(4 \cdot \operatorname{MAD}(r_\text{past}),\; 0.05\big)
+r = \ln\frac{E}{\hat{E}} < \mathrm{median}(r_\text{past}) - \max\big(4 \cdot \mathrm{MAD}(r_\text{past}),\; 0.05\big)
 ```
 
 where $r_\text{past}$ are the ratios from earlier nominal sols and MAD is the median absolute deviation, scaled by 1.4826 to match a standard deviation. The threshold is **learned from the forecaster's own past errors**, so there is no hand-set cutoff.
