@@ -51,6 +51,7 @@ Every hour, the controller solves a linear program over the next 36 hours, choos
 | Battery end of life | 1.4 Ah (30% fade), per dataset | **Real** |
 | Dust opacity range | Opportunity measured tau ≈ 0.5 normally and a record 10.8 on June 10, 2018 | **Real values**, stylized storm shape |
 | Solar irradiance | Mean solar constant at Mars, 590 W/m² | **Real constant** |
+| Battery cell temperature, voltage, current, impedance | NASA Li-ion Battery Aging data (B0005 to B0018), used to validate the heat-equation method | **Real** |
 | Thermal, load, array parameters | Assumptions in `habitat/config.py` | Simulated (see sensitivity analysis) |
 
 No public dataset of real habitat life-support telemetry exists, so the habitat itself is simulated, with all assumptions in one file.
@@ -64,6 +65,9 @@ python run_scenario.py                     # one storm scenario, 3 controllers, 
 python run_monte_carlo.py --n 200          # 200 randomized missions (~4 min on 8 cores)
 python run_analysis.py all                 # severity, detector, sensitivity analyses
 python validate_thermal.py                 # thermal model verification
+# in MATLAB (needs Python + NumPy, check with pyenv):
+#   validate_battery_thermal                   heat equation vs real NASA cell temperatures
+#   testCase = 'verify'; heat_equation_1d      solver convergence check
 ```
 
 All outputs go to `results/`.
@@ -140,9 +144,27 @@ The wall's transient lasts about 3 hours (L²/α), while the cabin responds over
 
 ![Thermal verification](results/thermal_validation.png)
 
-### Battery remaining-life forecast (MATLAB)
+### Heat-equation validation on real NASA battery data (MATLAB)
 
-TODO (Ajay): method, `capacity_fade.png`, and the predicted vs actual end-of-life table from `matlab/`.
+Our habitat thermal model is simulated, so we also tested the same modeling approach, the heat equation, against **real measurements**. Ajay modeled heat conduction inside each NASA 18650 cell during discharge:
+
+- **Model:** radial heat equation in a cylinder, `dT/dt = α·(1/r)·∂/∂r(r·∂T/∂r) + q(t)/(ρc)`, with a symmetry condition at the axis and convective (Robin) cooling at the surface. It is solved by `heat1d.py` (NumPy), called from MATLAB through its Python interface (`py.*`) in `validate_battery_thermal.m`. The solver supports explicit, backward Euler, and Crank-Nicolson time stepping with Dirichlet, Neumann, or convective (Robin) boundaries; `heat_equation_1d.m` drives it from MATLAB, and its `verify` mode confirms second-order convergence against the exact solution.
+- **Heat source, two versions:** *voltage-based*, the irreversible heat |I|·(U_ocv − V) from measured current and voltage, with open-circuit voltage estimated from each preceding charge curve; and *impedance-based*, I²·(Re + Rct) from the most recent impedance (EIS) test.
+- **Fitting:** only two parameters (surface heat-transfer coefficient h and a heat scale factor β) fitted on every discharge of B0005, B0006, and B0007.
+- **Blind validation:** every discharge of **B0018** predicted with **no refitting**, compared with its surface thermocouple.
+
+| Heat model | Battery | Role | RMSE | Max error | Mean peak-temp error | Within 1 °C |
+|---|---|---|---|---|---|---|
+| Voltage-based | B0005 to B0007 | train | 0.96 to 1.28 °C | 3.7 to 5.1 °C | 0.53 to 2.28 °C | 51 to 69% |
+| **Voltage-based** | **B0018** | **blind test** | **1.00 °C** | **3.0 °C** | **0.58 °C** | **61%** |
+| Impedance-based | B0005 to B0007 | train | 1.14 to 1.55 °C | 4.1 to 5.9 °C | 1.03 to 3.94 °C | 52 to 67% |
+| Impedance-based | B0018 | blind test | 2.18 °C | 4.8 °C | 1.12 °C | 32% |
+
+**Takeaway:** the voltage-based model predicts a battery it never saw to within about 1 °C RMSE, and its blind-test error is no worse than its training error, so it generalizes. The impedance-based model generalizes worse, likely because impedance tests are infrequent and miss changes between them. This supports using heat-equation models for habitat control decisions. It validates the *method* on real data; the habitat's own geometry and parameters remain assumptions.
+
+Figures: `results/voltage/` and `results/eis/` (parity plots, error per cycle, peak temperature over battery life, example cycles).
+
+![Peak temperature over battery life](results/voltage/peak_temperature_vs_cycle.png)
 
 ## Limitations and next steps
 
@@ -165,7 +187,9 @@ habitat/
   controllers.py  naive and rule-based baselines
   mpc.py          thermal-aware MPC (linear program, HiGHS)
   simulator.py    closed-loop simulation, metrics, plots
-heat1d.py           independent Crank-Nicolson solver (verification)
+heat1d.py           independent heat-equation solver (Crank-Nicolson), used by both verifications
+heat_equation_1d.m  MATLAB wrapper for heat1d.py
+validate_battery_thermal.m  heat-equation validation on real NASA battery temperatures
 run_scenario.py     single scenario
 run_monte_carlo.py  randomized missions
 run_analysis.py     severity, detector, sensitivity
