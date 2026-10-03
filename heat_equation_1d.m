@@ -8,14 +8,15 @@
 %
 %   Methods : 'explicit' (Forward Euler), 'implicit' (Backward Euler),
 %             'cn' (Crank-Nicolson)
-%   BCs     : per end, 'dirichlet' (T = value) or 'neumann' (dT/dn = value,
-%             outward normal; 0 = insulated)
+%   BCs     : per end, 'dirichlet' (T = value), 'neumann' (dT/dn = value,
+%             outward normal; 0 = insulated) or 'robin' (convection; see heat1d.py)
 %
 %   Usage:
 %       heat_equation_1d                         % demo with animation
 %       testCase = 'verify'; heat_equation_1d    % compare to exact solution
 %       method = 'explicit'; heat_equation_1d    % choose the time integrator
 %
+%   See validate_battery_thermal.m for validation against NASA battery data.
 %   Requires Python with NumPy configured in MATLAB (check with: pyenv).
 
 if ~exist('testCase', 'var'), testCase = 'demo'; end
