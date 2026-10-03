@@ -27,15 +27,67 @@ Three things go wrong during a mission: a dust storm cuts solar output, the batt
 ## Approach
 
 ### 1. Heat equation thermal model (`habitat/thermal.py`)
-Heat flows from the cabin through a 10 cm insulated wall into Mars air at roughly −95 to −25 °C. We model the wall with the **1D heat equation**, discretized by finite differences (10 nodes) and integrated with backward Euler, coupled to a lumped cabin node. The result is a linear state-space model, `x[k+1] = Ad·x[k] + Bq·Q[k] + Ba·T_amb[k]`, which fits directly inside the optimizer.
+Heat flows from the cabin through a 10 cm insulated wall into Mars air at roughly −95 to −25 °C. Inside the wall, temperature obeys the **1D heat equation**:
+
+```math
+\frac{\partial T}{\partial t} = \alpha \frac{\partial^2 T}{\partial x^2}, \qquad 0 \le x \le L, \qquad \alpha = \frac{k}{\rho c}
+```
+
+with convective boundaries on both faces and a lumped cabin node of heat capacity $C$:
+
+```math
+C \frac{dT_c}{dt} = h_{in} A \big(T(0,t) - T_c\big) + Q(t), \qquad -k \frac{\partial T}{\partial x}\Big|_{x=L} = h_{out}\big(T(L,t) - T_{amb}(t)\big)
+```
+
+where $Q$ is heater power plus waste heat from running equipment. We discretize the wall with finite differences (10 nodes) and integrate with backward Euler, which is unconditionally stable at $\Delta t = 1$ h. Stacking the cabin and wall temperatures into a state vector $\mathbf{x}$ gives a linear state-space model:
+
+```math
+\mathbf{x}_{k+1} = A_d \, \mathbf{x}_k + B_q \, Q_k + B_a \, T_{amb,k}, \qquad A_d = (\mathbf{C} - \Delta t \, \mathbf{K})^{-1}\mathbf{C}
+```
+
+where $\mathbf{C}$ holds the node heat capacities and $\mathbf{K}$ the conductances. Because it is linear in $Q$, it fits directly inside the optimizer.
 
 **Why 1D:** the wall is about 10 cm thick and the habitat is meters across, so heat flows almost entirely through the wall's thickness (the thin-wall approximation). A 3D model would need an invented geometry, add no accuracy given uncertain parameters, and be too slow to re-solve every hour.
 
 ### 2. Fourier solar forecast and storm detection (`habitat/forecast.py`)
-The forecaster fits a sum of harmonics with the Mars-day period (24.66 h) to **past measured generation only**, then extrapolates 36 hours ahead. It never sees the true storm schedule. A storm detector compares each sol's actual energy to its forecast and raises an alert when the shortfall exceeds a threshold **learned from the forecaster's own past errors** (median − 4·MAD), so there is no hand-set cutoff.
+Solar generation is simulated from physics, not from a Fourier series, so the forecast is not circular:
+
+```math
+P(t) = S_\text{Mars} \, \max\big(\cos\theta_z(t), 0\big) \, e^{-0.3\,\tau(t)} \, A_\text{array} \, \eta \, \varepsilon(t)
+```
+
+where $S_\text{Mars} = 590$ W/m², $\theta_z$ is the solar zenith angle, $\tau$ is dust optical depth, and $\varepsilon$ is multiplicative noise. The factor 0.3 reflects that Mars dust scatters light rather than fully blocking it.
+
+The forecaster fits harmonics of the Mars-day period $P_\text{sol} = 24.66$ h to **past measured generation only** (least squares over the last 2 to 3 sols), then extrapolates 36 hours ahead:
+
+```math
+\hat{P}(t) = \max\!\Big(0,\; a_0 + \sum_{n=1}^{6} \Big[a_n \cos\frac{2\pi n t}{P_\text{sol}} + b_n \sin\frac{2\pi n t}{P_\text{sol}}\Big]\Big)
+```
+
+It never sees the true storm schedule. A storm detector compares each sol's actual energy $E$ to its forecast $\hat{E}$ and raises an alert when
+
+```math
+r = \ln\frac{E}{\hat{E}} < \operatorname{median}(r_\text{past}) - \max\big(4 \cdot \operatorname{MAD}(r_\text{past}),\; 0.05\big)
+```
+
+where $r_\text{past}$ are the ratios from earlier nominal sols and MAD is the median absolute deviation, scaled by 1.4826 to match a standard deviation. The threshold is **learned from the forecaster's own past errors**, so there is no hand-set cutoff.
 
 ### 3. Thermal-aware model predictive control (`habitat/mpc.py`)
-Every hour, the controller solves a linear program over the next 36 hours, choosing heater power, which loads run, and battery charge/discharge, subject to power balance, battery dynamics, the heat-equation model, the cabin comfort band, and a battery reserve. It applies only the first hour's decision, then re-plans (receding horizon). Priorities are encoded as penalties: losing life support costs far more than a cold cabin, which costs more than losing comms, which costs more than skipping science.
+Every hour, the controller solves a linear program over the next $H = 36$ hours. Decision variables for each hour $h$ are heater power $u_h$, essential and deferrable load fractions $e_h, d_h \in [0,1]$, battery charge and discharge $c_h, g_h \ge 0$, and slack variables $s$ that keep the problem feasible when energy runs out:
+
+```math
+\begin{aligned}
+\min \quad & \sum_{h=0}^{H-1} \Big( 10^4 s^\text{crit}_h + 500\, s^\text{cold}_h + 20\, s^\text{res}_h + 0.3\, s^\text{comf}_h - 5\, P_e e_h - P_d d_h + 0.01\,(u_h + q^\text{rad}_h) \Big)\Delta t \;-\; 0.8\, E_H \\
+\text{s.t.} \quad & \hat{P}_h \Delta t + g_h = \big(P_\text{crit} - s^\text{crit}_h + P_e e_h + P_d d_h + u_h\big)\Delta t + c_h + \text{curtail}_h && \text{power balance} \\
+& E_{h+1} = E_h + \eta_c c_h - g_h/\eta_d, \quad 0 \le E_h \le E_\text{cap} && \text{battery} \\
+& \mathbf{x}_{h+1} = A_d \mathbf{x}_h + B_q Q_h + B_a T_{amb,h} && \text{heat equation} \\
+& T_\text{min} + 0.5 - s^\text{cold}_h \le T_{c,h+1} \le T_\text{max} && \text{safe band} \\
+& E_{h+1} \ge 0.15\, E_\text{cap} - s^\text{res}_h && \text{reserve} \\
+& T_{c,h+1} \ge T_\text{set} - s^\text{comf}_h && \text{comfort}
+\end{aligned}
+```
+
+$\hat{P}_h$ is the Fourier forecast, $Q_h = u_h + \gamma\,(\text{running loads}) - q^\text{rad}_h$ is heater power plus waste heat ($\gamma = 0.6$) minus heat dumped by the radiators, $E_H$ is stored energy at the end of the horizon, and $P_e = 1.5$ kW, $P_d = 4$ kW. It applies only the first hour's decision, then re-plans (receding horizon). The penalty weights encode priorities: losing life support costs far more than a cold cabin, which costs more than losing comms, which costs more than skipping science. The constraint matrices depend only on fixed parameters, so they are built once and only the right-hand sides change each hour.
 
 **Pre-heating emerges on its own.** Nobody programmed it: during storms the optimizer heats the cabin to about 23.5 °C at midday, then coasts down to the 18.5 °C floor overnight, because storing midday energy as heat avoids battery losses and the capacity lost in the string failure.
 
@@ -140,7 +192,7 @@ We checked the controller's thermal model against an **independent Crank-Nicolso
 - **Wall:** after a sudden outside cold snap, the controller's model (1 h steps, 10 nodes) misses the wall's first-hour transient by up to 4.2 °C, then matches the fine solver (5 s steps, 201 nodes) to within 0.01 °C from hour 6. The steady heat flux matches exactly (34.8 W/m²).
 - **Cabin:** with heaters off for 48 h, cabin temperature error versus a 36 s reference is at most **0.06 °C**.
 
-The wall's transient lasts about 3 hours (L²/α), while the cabin responds over days (C/UA ≈ 120 h), so 1-hour steps are accurate for the quantity every control decision depends on.
+The wall's transient lasts about $L^2/\alpha \approx 3$ hours, while the cabin responds over days ($C/UA \approx 120$ h), so 1-hour steps are accurate for the quantity every control decision depends on.
 
 ![Thermal verification](results/thermal_validation.png)
 
@@ -148,9 +200,14 @@ The wall's transient lasts about 3 hours (L²/α), while the cabin responds over
 
 Our habitat thermal model is simulated, so we also tested the same modeling approach, the heat equation, against **real measurements**. Ajay modeled heat conduction inside each NASA 18650 cell during discharge:
 
-- **Model:** radial heat equation in a cylinder, `dT/dt = α·(1/r)·∂/∂r(r·∂T/∂r) + q(t)/(ρc)`, with a symmetry condition at the axis and convective (Robin) cooling at the surface. It is solved by `heat1d.py` (NumPy), called from MATLAB through its Python interface (`py.*`) in `validate_battery_thermal.m`. The solver supports explicit, backward Euler, and Crank-Nicolson time stepping with Dirichlet, Neumann, or convective (Robin) boundaries; `heat_equation_1d.m` drives it from MATLAB, and its `verify` mode confirms second-order convergence against the exact solution.
-- **Heat source, two versions:** *voltage-based*, the irreversible heat |I|·(U_ocv − V) from measured current and voltage, with open-circuit voltage estimated from each preceding charge curve; and *impedance-based*, I²·(Re + Rct) from the most recent impedance (EIS) test.
-- **Fitting:** only two parameters (surface heat-transfer coefficient h and a heat scale factor β) fitted on every discharge of B0005, B0006, and B0007.
+- **Model:** radial heat equation in a cylinder of radius $R$, with symmetry at the axis and convective (Robin) cooling at the surface:
+
+```math
+\frac{\partial T}{\partial t} = \alpha \, \frac{1}{r}\frac{\partial}{\partial r}\Big(r \frac{\partial T}{\partial r}\Big) + \frac{\beta\, q(t)}{\rho c \, V_\text{cell}}, \qquad \frac{\partial T}{\partial r}\Big|_{r=0} = 0, \qquad -k \frac{\partial T}{\partial r}\Big|_{r=R} = h_\text{eff}\big(T(R,t) - T_{amb}\big)
+```
+ It is solved by `heat1d.py` (NumPy), called from MATLAB through its Python interface (`py.*`) in `validate_battery_thermal.m`. The solver supports explicit, backward Euler, and Crank-Nicolson time stepping with Dirichlet, Neumann, or convective (Robin) boundaries; `heat_equation_1d.m` drives it from MATLAB, and its `verify` mode confirms second-order convergence against the exact solution.
+- **Heat source, two versions:** *voltage-based*, the irreversible heat $q = |I|\,(U_\text{ocv} - V)$ from measured current and voltage, with open-circuit voltage estimated from each preceding charge curve; and *impedance-based*, $q = I^2 (R_e + R_{ct})$ from the most recent impedance (EIS) test.
+- **Fitting:** only two parameters, the surface heat-transfer coefficient $h_\text{eff}$ and a heat scale factor $\beta$ ($\beta \approx 1$ means the energy balance closes), fitted on every discharge of B0005, B0006, and B0007.
 - **Blind validation:** every discharge of **B0018** predicted with **no refitting**, compared with its surface thermocouple.
 
 | Heat model | Battery | Role | RMSE | Max error | Mean peak-temp error | Within 1 °C |
