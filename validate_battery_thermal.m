@@ -41,7 +41,15 @@ if count(py.sys.path, here) == 0
     insert(py.sys.path, int32(0), here);
 end
 heat1d = py.importlib.reload(py.importlib.import_module('heat1d'));
-dataDir = fullfile(here, 'data');
+% Battery .mat files: data/ (may be a symlink on macOS/Linux) or battery_data/
+dataDir = '';
+for cand = {fullfile(here, 'data'), fullfile(here, 'battery_data')}
+    if isfile(fullfile(cand{1}, 'B0005.mat')), dataDir = cand{1}; break; end
+end
+if isempty(dataDir)
+    error(['Could not find B0005.mat. Put B0005/B0006/B0007/B0018.mat in\n  %s\n' ...
+           'or\n  %s'], fullfile(here, 'data'), fullfile(here, 'battery_data'));
+end
 outDir  = fullfile(here, 'results', heatModel);
 if ~exist(outDir, 'dir'), mkdir(outDir); end
 
